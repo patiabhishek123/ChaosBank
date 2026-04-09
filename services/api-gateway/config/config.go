@@ -5,16 +5,16 @@ import (
 )
 
 type Config struct {
-	Port            string
+	Port              string
 	TransactionSvcURL string
-	WorkerSvcURL    string
+	WorkerSvcURL      string
 }
 
 func Load() *Config {
 	return &Config{
-		Port:            getEnv("PORT", "8080"),
+		Port:              getEnv("PORT", "8080"),
 		TransactionSvcURL: getEnv("TRANSACTION_SVC_URL", "http://transaction-service:8081"),
-		WorkerSvcURL:    getEnv("WORKER_SVC_URL", "http://worker-service:8082"),
+		WorkerSvcURL:      getEnv("WORKER_SVC_URL", "http://worker-service:8082"),
 	}
 }
 
