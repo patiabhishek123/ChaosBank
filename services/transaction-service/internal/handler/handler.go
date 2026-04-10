@@ -1,24 +1,28 @@
 package handler
 
 import (
+	"database/sql"
 	"encoding/json"
 	"net/http"
 
 	"github.com/chaosbank/chaosbank/pkg/service"
 	"github.com/chaosbank/chaosbank/pkg/util"
 	"github.com/chaosbank/chaosbank/services/transaction-service/internal/domain"
+	"github.com/chaosbank/chaosbank/services/transaction-service/internal/repository"
 	"github.com/go-chi/chi/v5"
 )
 
 type Handler struct {
-	router chi.Router
-	logger *service.Logger
+	router                chi.Router
+	logger                *service.Logger
+	idempotencyRepository domain.IdempotencyRepository
 }
 
-func NewHandler(logger *service.Logger) *Handler {
+func NewHandler(logger *service.Logger, db *sql.DB) *Handler {
 	h := &Handler{
-		router: chi.NewRouter(),
-		logger: logger,
+		router:                chi.NewRouter(),
+		logger:                logger,
+		idempotencyRepository: repository.NewPostgresIdempotencyRepository(db),
 	}
 	h.setupRoutes()
 	return h
@@ -50,7 +54,7 @@ func (h *Handler) transfer(w http.ResponseWriter, r *http.Request) {
 			"request_id": idempotencyKey,
 			"error":      err.Error(),
 		})
-		h.writeError(w, http.StatusBadRequest, "Idempotency-Key", "invalid JSON body")
+		h.writeError(w, http.StatusBadRequest, idempotencyKey, "invalid JSON body")
 		return
 	}
 
@@ -59,7 +63,60 @@ func (h *Handler) transfer(w http.ResponseWriter, r *http.Request) {
 			"request_id": idempotencyKey,
 			"error":      err.Error(),
 		})
-		h.writeError(w, http.StatusBadRequest, "Idempotency-Key", err.Error())
+		h.writeError(w, http.StatusBadRequest, idempotencyKey, err.Error())
+		return
+	}
+
+	// Hash the request for idempotency detection
+	requestHash, err := util.HashRequest(req)
+	if err != nil {
+		h.logger.Error("handler.transfer.hash_error", map[string]interface{}{
+			"request_id": idempotencyKey,
+			"error":      err.Error(),
+		})
+		h.writeError(w, http.StatusInternalServerError, idempotencyKey, "internal server error")
+		return
+	}
+
+	// Check and create idempotency record
+	idempotencyRecord, err := h.idempotencyRepository.CheckAndCreateIfNotExists(idempotencyKey, requestHash)
+	if err != nil {
+		if conflictErr, ok := err.(*domain.ErrIdempotencyConflict); ok {
+			h.logger.Warn("handler.transfer.idempotency_conflict", map[string]interface{}{
+				"request_id": idempotencyKey,
+				"error":      conflictErr.Error(),
+			})
+			h.writeError(w, http.StatusConflict, idempotencyKey, conflictErr.Error())
+			return
+		}
+
+		h.logger.Error("handler.transfer.idempotency_error", map[string]interface{}{
+			"request_id": idempotencyKey,
+			"error":      err.Error(),
+		})
+		h.writeError(w, http.StatusInternalServerError, idempotencyKey, "internal server error")
+		return
+	}
+
+	// If record already has a response, return it (idempotent response)
+	if idempotencyRecord.Status == "completed" && idempotencyRecord.Response != "" {
+		h.logger.Info("handler.transfer.returning_cached_response", map[string]interface{}{
+			"request_id": idempotencyKey,
+		})
+
+		var cachedResp domain.TransferResponse
+		if err := json.Unmarshal([]byte(idempotencyRecord.Response), &cachedResp); err != nil {
+			h.logger.Error("handler.transfer.unmarshal_cached_error", map[string]interface{}{
+				"request_id": idempotencyKey,
+				"error":      err.Error(),
+			})
+			h.writeError(w, http.StatusInternalServerError, idempotencyKey, "internal server error")
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		json.NewEncoder(w).Encode(cachedResp)
 		return
 	}
 
@@ -76,6 +133,26 @@ func (h *Handler) transfer(w http.ResponseWriter, r *http.Request) {
 		To:        req.To,
 		Amount:    req.Amount,
 		Status:    "accepted",
+	}
+
+	// Store response in idempotency record
+	respJSON, err := json.Marshal(resp)
+	if err != nil {
+		h.logger.Error("handler.transfer.response_marshal_error", map[string]interface{}{
+			"request_id": idempotencyKey,
+			"error":      err.Error(),
+		})
+		h.writeError(w, http.StatusInternalServerError, idempotencyKey, "internal server error")
+		return
+	}
+
+	if err := h.idempotencyRepository.UpdateResponse(idempotencyKey, string(respJSON)); err != nil {
+		h.logger.Error("handler.transfer.response_store_error", map[string]interface{}{
+			"request_id": idempotencyKey,
+			"error":      err.Error(),
+		})
+		h.writeError(w, http.StatusInternalServerError, idempotencyKey, "internal server error")
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
