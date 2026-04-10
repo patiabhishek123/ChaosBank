@@ -15,7 +15,7 @@ func main() {
 	logger := service.NewLogger(baseCfg.LogLevel, os.Stdout)
 
 	router := service.NewRouter()
-	h := handler.NewHandler()
+	h := handler.NewHandler(logger)
 	router.Mount("/", h.Router())
 
 	server := service.NewServer(baseCfg, router)
