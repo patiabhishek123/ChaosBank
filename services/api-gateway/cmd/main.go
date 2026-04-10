@@ -1,20 +1,30 @@
 package main
 
 import (
-	"log"
-	"net/http"
+	"context"
+	"os"
+	"os/signal"
+	"syscall"
 
-	"github.com/chaosbank/chaosbank/services/api-gateway/config"
+	"github.com/chaosbank/chaosbank/pkg/service"
 	"github.com/chaosbank/chaosbank/services/api-gateway/internal/handler"
 )
 
 func main() {
-	cfg := config.Load()
+	baseCfg := service.LoadConfig()
+	logger := service.NewLogger(baseCfg.LogLevel, os.Stdout)
 
+	router := service.NewRouter()
 	h := handler.NewHandler()
+	router.Mount("/", h.Router())
 
-	http.Handle("/", h.Router())
+	server := service.NewServer(baseCfg, router)
 
-	log.Printf("API Gateway starting on port %s", cfg.Port)
-	log.Fatal(http.ListenAndServe(":"+cfg.Port, nil))
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if err := service.Run(ctx, server, logger, baseCfg); err != nil {
+		logger.Error("service.failed", map[string]interface{}{"error": err.Error()})
+		os.Exit(1)
+	}
 }

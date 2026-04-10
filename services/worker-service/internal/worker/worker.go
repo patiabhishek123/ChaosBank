@@ -2,8 +2,9 @@ package worker
 
 import (
 	"context"
-	"log"
+	"errors"
 
+	"github.com/chaosbank/chaosbank/pkg/service"
 	"github.com/chaosbank/chaosbank/services/worker-service/config"
 	"github.com/segmentio/kafka-go"
 )
@@ -11,9 +12,10 @@ import (
 type Worker struct {
 	cfg    *config.Config
 	reader *kafka.Reader
+	logger *service.Logger
 }
 
-func NewWorker(cfg *config.Config) *Worker {
+func NewWorker(cfg *config.Config, logger *service.Logger) *Worker {
 	r := kafka.NewReader(kafka.ReaderConfig{
 		Brokers: []string{cfg.KafkaBrokers},
 		Topic:   "transactions",
@@ -23,26 +25,34 @@ func NewWorker(cfg *config.Config) *Worker {
 	return &Worker{
 		cfg:    cfg,
 		reader: r,
+		logger: logger,
 	}
 }
 
-func (w *Worker) Start() {
+func (w *Worker) Start(ctx context.Context) {
 	defer w.reader.Close()
 
 	for {
-		m, err := w.reader.ReadMessage(context.Background())
+		m, err := w.reader.ReadMessage(ctx)
 		if err != nil {
-			log.Printf("Error reading message: %v", err)
+			if errors.Is(err, context.Canceled) {
+				w.logger.Info("worker.shutdown", nil)
+				return
+			}
+
+			w.logger.Error("worker.read_error", map[string]interface{}{"error": err.Error()})
 			continue
 		}
 
-		log.Printf("Processing message: %s", string(m.Value))
-		// Process the message
+		w.logger.Info("worker.message_received", map[string]interface{}{
+			"topic":     m.Topic,
+			"partition": m.Partition,
+			"offset":    m.Offset,
+		})
 		w.processTransaction(m.Value)
 	}
 }
 
 func (w *Worker) processTransaction(data []byte) {
-	// Implement transaction processing logic
-	log.Printf("Processing transaction: %s", string(data))
+	w.logger.Info("worker.process_transaction", map[string]interface{}{"payload": string(data)})
 }

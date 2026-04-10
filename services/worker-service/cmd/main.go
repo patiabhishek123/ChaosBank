@@ -1,17 +1,32 @@
 package main
 
 import (
-	"log"
+	"context"
+	"os"
+	"os/signal"
+	"syscall"
 
+	"github.com/chaosbank/chaosbank/pkg/service"
 	"github.com/chaosbank/chaosbank/services/worker-service/config"
 	"github.com/chaosbank/chaosbank/services/worker-service/internal/worker"
 )
 
 func main() {
-	cfg := config.Load()
+	baseCfg := service.LoadConfig()
+	logger := service.NewLogger(baseCfg.LogLevel, os.Stdout)
+	appCfg := config.Load()
 
-	w := worker.NewWorker(cfg)
+	router := service.NewRouter()
+	workerSvc := worker.NewWorker(appCfg, logger)
 
-	log.Println("Worker Service starting")
-	w.Start()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	go workerSvc.Start(ctx)
+
+	server := service.NewServer(baseCfg, router)
+	if err := service.Run(ctx, server, logger, baseCfg); err != nil {
+		logger.Error("service.failed", map[string]interface{}{"error": err.Error()})
+		os.Exit(1)
+	}
 }
