@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"github.com/chaosbank/chaosbank/pkg/service"
 	"github.com/chaosbank/chaosbank/pkg/util"
 	"github.com/chaosbank/chaosbank/services/transaction-service/internal/domain"
+	"github.com/chaosbank/chaosbank/services/transaction-service/internal/kafka"
 )
 
 // MockIdempotencyRepository for testing
@@ -61,15 +63,26 @@ func (m *MockIdempotencyRepository) CheckAndCreateIfNotExists(key, requestHash s
 	return m.Create(key, requestHash)
 }
 
+type MockProducer struct{}
+
+func (p *MockProducer) ProduceTransferEvent(_ context.Context, _ kafka.TransferEvent) error {
+	return nil
+}
+
+func (p *MockProducer) Close() error {
+	return nil
+}
+
 func TestIdempotencySuccess(t *testing.T) {
 	logger := service.NewLogger("info", os.Stdout)
 	mockRepo := NewMockIdempotencyRepository()
 
-	// Create handler with mock repository
+	// Create handler with mock repository and mock producer
 	h := &Handler{
 		router:                service.NewRouter(),
 		logger:                logger,
 		idempotencyRepository: mockRepo,
+		producer:              &MockProducer{},
 	}
 	h.setupRoutes()
 
@@ -110,6 +123,7 @@ func TestIdempotencyConflict(t *testing.T) {
 		router:                service.NewRouter(),
 		logger:                logger,
 		idempotencyRepository: mockRepo,
+		producer:              &MockProducer{},
 	}
 	h.setupRoutes()
 
@@ -165,6 +179,7 @@ func TestIdempotencyCachedResponse(t *testing.T) {
 		router:                service.NewRouter(),
 		logger:                logger,
 		idempotencyRepository: mockRepo,
+		producer:              &MockProducer{},
 	}
 	h.setupRoutes()
 

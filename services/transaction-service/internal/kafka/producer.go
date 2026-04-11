@@ -16,6 +16,11 @@ const (
 	retryDelay         = 2 * time.Second
 )
 
+type EventProducer interface {
+	ProduceTransferEvent(ctx context.Context, event TransferEvent) error
+	Close() error
+}
+
 type Producer struct {
 	writer *kafka.Writer
 	logger *service.Logger
@@ -30,7 +35,7 @@ type TransferEvent struct {
 	Timestamp time.Time `json:"timestamp"`
 }
 
-func NewProducer(brokers, topic string, logger *service.Logger) *Producer {
+func NewProducer(brokers, topic string, logger *service.Logger) EventProducer {
 	brokerList := parseBrokers(brokers)
 
 	return &Producer{

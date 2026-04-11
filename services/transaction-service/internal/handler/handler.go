@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/chaosbank/chaosbank/pkg/service"
 	"github.com/chaosbank/chaosbank/pkg/util"
@@ -17,10 +18,10 @@ type Handler struct {
 	router                chi.Router
 	logger                *service.Logger
 	idempotencyRepository domain.IdempotencyRepository
-	producer              *kafka.Producer
+	producer              kafka.EventProducer
 }
 
-func NewHandler(logger *service.Logger, db *sql.DB, producer *kafka.Producer) *Handler {
+func NewHandler(logger *service.Logger, db *sql.DB, producer kafka.EventProducer) *Handler {
 	h := &Handler{
 		router:                chi.NewRouter(),
 		logger:                logger,
@@ -130,26 +131,37 @@ func (h *Handler) transfer(w http.ResponseWriter, r *http.Request) {
 		"amount":     req.Amount,
 	})
 
+	event := kafka.TransferEvent{
+		EventID:   idempotencyKey,
+		From:      req.From,
+		To:        req.To,
+		Amount:    req.Amount,
+		Timestamp: time.Now().UTC(),
+	}
+
+	if h.producer == nil {
+		h.logger.Error("handler.transfer.kafka_not_configured", map[string]interface{}{
+			"request_id": idempotencyKey,
+		})
+		h.writeError(w, http.StatusInternalServerError, idempotencyKey, "internal server error")
+		return
+	}
+
+	if err := h.producer.ProduceTransferEvent(r.Context(), event); err != nil {
+		h.logger.Error("handler.transfer.kafka_error", map[string]interface{}{
+			"request_id": idempotencyKey,
+			"error":      err.Error(),
+		})
+		h.writeError(w, http.StatusServiceUnavailable, idempotencyKey, "failed to enqueue transfer event")
+		return
+	}
+
 	resp := domain.TransferResponse{
 		RequestID: idempotencyKey,
 		From:      req.From,
 		To:        req.To,
 		Amount:    req.Amount,
 		Status:    "accepted",
-	}
-
-	event := kafka.TransferEvent{
-		From:   req.From,
-		To:     req.To,
-		Amount: req.Amount,
-	}
-	if h.producer != nil {
-		if err := h.producer.ProduceTransferEvent(r.Context(), event); err != nil {
-			h.logger.Error("handler.transfer.kafka_error", map[string]interface{}{
-				"request_id": idempotencyKey,
-				"error":      err.Error(),
-			})
-		}
 	}
 
 	// Store response in idempotency record
