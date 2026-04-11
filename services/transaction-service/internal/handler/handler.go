@@ -8,6 +8,7 @@ import (
 	"github.com/chaosbank/chaosbank/pkg/service"
 	"github.com/chaosbank/chaosbank/pkg/util"
 	"github.com/chaosbank/chaosbank/services/transaction-service/internal/domain"
+	"github.com/chaosbank/chaosbank/services/transaction-service/internal/kafka"
 	"github.com/chaosbank/chaosbank/services/transaction-service/internal/repository"
 	"github.com/go-chi/chi/v5"
 )
@@ -16,13 +17,15 @@ type Handler struct {
 	router                chi.Router
 	logger                *service.Logger
 	idempotencyRepository domain.IdempotencyRepository
+	producer              *kafka.Producer
 }
 
-func NewHandler(logger *service.Logger, db *sql.DB) *Handler {
+func NewHandler(logger *service.Logger, db *sql.DB, producer *kafka.Producer) *Handler {
 	h := &Handler{
 		router:                chi.NewRouter(),
 		logger:                logger,
 		idempotencyRepository: repository.NewPostgresIdempotencyRepository(db),
+		producer:              producer,
 	}
 	h.setupRoutes()
 	return h
@@ -133,6 +136,20 @@ func (h *Handler) transfer(w http.ResponseWriter, r *http.Request) {
 		To:        req.To,
 		Amount:    req.Amount,
 		Status:    "accepted",
+	}
+
+	event := kafka.TransferEvent{
+		From:   req.From,
+		To:     req.To,
+		Amount: req.Amount,
+	}
+	if h.producer != nil {
+		if err := h.producer.ProduceTransferEvent(r.Context(), event); err != nil {
+			h.logger.Error("handler.transfer.kafka_error", map[string]interface{}{
+				"request_id": idempotencyKey,
+				"error":      err.Error(),
+			})
+		}
 	}
 
 	// Store response in idempotency record

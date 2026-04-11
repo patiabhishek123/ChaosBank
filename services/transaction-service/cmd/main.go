@@ -10,6 +10,7 @@ import (
 	"github.com/chaosbank/chaosbank/pkg/service"
 	"github.com/chaosbank/chaosbank/services/transaction-service/config"
 	"github.com/chaosbank/chaosbank/services/transaction-service/internal/handler"
+	"github.com/chaosbank/chaosbank/services/transaction-service/internal/kafka"
 	_ "github.com/lib/pq"
 )
 
@@ -17,6 +18,9 @@ func main() {
 	baseCfg := service.LoadConfig()
 	appCfg := config.Load()
 	logger := service.NewLogger(baseCfg.LogLevel, os.Stdout)
+
+	producer := kafka.NewProducer(appCfg.KafkaBrokers, "transactions", logger)
+	defer producer.Close()
 
 	// Connect to database
 	db, err := sql.Open("postgres", appCfg.DatabaseURL)
@@ -34,7 +38,7 @@ func main() {
 	logger.Info("db.connected", nil)
 
 	router := service.NewRouter()
-	h := handler.NewHandler(logger, db)
+	h := handler.NewHandler(logger, db, producer)
 	router.Mount("/", h.Router())
 
 	server := service.NewServer(baseCfg, router)
