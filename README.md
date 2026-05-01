@@ -52,6 +52,8 @@ Each service uses environment variables for configuration. See config/ directori
 
 - `KAFKA_GROUP_ID` (default: `worker-group`)
 - `KAFKA_REPLAY_FROM_BEGINNING` (default: `false`)
+- `REPLAY_ENABLED` (default: `false`)
+- `REPLAY_CONFIRM_TOKEN` (default: `REPLAY_ALL_EVENTS`)
 
 When `KAFKA_REPLAY_FROM_BEGINNING=true`, the worker starts with a fresh replay group and consumes from offset `0` for topic `transactions`.
 
@@ -63,3 +65,19 @@ Kafka broker is configured with:
 - `KAFKA_LOG_RETENTION_BYTES=-1`
 
 This keeps events from being deleted, enabling replay.
+
+### Replay endpoint
+
+- Endpoint: `POST /replay` (worker-service)
+- Required header: `X-Replay-Confirm: <REPLAY_CONFIRM_TOKEN>`
+- Safety checks:
+   - replay must be enabled (`REPLAY_ENABLED=true`)
+   - `CHAOS_MODE` must be disabled
+   - only one replay can run at a time
+
+Behavior:
+
+- Clears replay tables (`accounts`, `transactions`, `ledger_entries`, `processed_events`, `account_locks`)
+- Reprocesses all Kafka events from offset `0` across all `transactions` topic partitions
+- Rebuilds balances by replaying transfer events
+- Emits progress logs (`worker.replay.*`)

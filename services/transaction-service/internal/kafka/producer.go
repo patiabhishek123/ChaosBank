@@ -103,7 +103,7 @@ func (p *Producer) ProduceTransferEvent(ctx context.Context, event TransferEvent
 				"error":    err.Error(),
 			})
 		} else {
-		lastErr = p.writer.WriteMessages(ctx, message)
+			lastErr = p.writer.WriteMessages(ctx, message)
 		}
 		if lastErr == nil {
 			if err := p.chaos.InjectPartialFailure("kafka.producer.after_send"); err != nil {

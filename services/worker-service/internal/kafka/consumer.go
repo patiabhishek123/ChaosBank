@@ -35,8 +35,8 @@ func NewConsumer(brokers, topic, groupID string, replayFromBeginning bool, logge
 		readerGroupID = replayGroupID(groupID)
 		startOffset = kafka.FirstOffset
 		logger.Warn("kafka.consumer.replay_mode_enabled", map[string]interface{}{
-			"group_id":      readerGroupID,
-			"start_offset":  startOffset,
+			"group_id":       readerGroupID,
+			"start_offset":   startOffset,
 			"replay_enabled": true,
 		})
 	}
