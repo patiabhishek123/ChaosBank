@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 
 	"github.com/chaosbank/chaosbank/pkg/service"
 	"github.com/chaosbank/chaosbank/pkg/util"
@@ -189,10 +190,24 @@ func (w *Worker) applyTransferBalanceUpdates(ctx context.Context, tx *sql.Tx, ev
 		return errors.New("from and to accounts must be different")
 	}
 
+	amount := math.Round(event.Amount*100) / 100
+	if amount <= 0 {
+		return errors.New("amount must be greater than 0")
+	}
+
+	type accountSnapshot struct {
+		ID      string
+		Number  string
+		Balance float64
+	}
+
+	accounts := make(map[string]accountSnapshot, 2)
+
 	rows, err := tx.QueryContext(ctx, `
-		SELECT account_number
+		SELECT id, account_number, balance
 		FROM accounts
 		WHERE account_number IN ($1, $2)
+		  AND status = 'active'
 		ORDER BY account_number
 		FOR UPDATE
 	`, event.From, event.To)
@@ -203,21 +218,40 @@ func (w *Worker) applyTransferBalanceUpdates(ctx context.Context, tx *sql.Tx, ev
 
 	lockedCount := 0
 	for rows.Next() {
+		var acc accountSnapshot
+		if err := rows.Scan(&acc.ID, &acc.Number, &acc.Balance); err != nil {
+			return err
+		}
+		accounts[acc.Number] = acc
 		lockedCount++
 	}
 	if err := rows.Err(); err != nil {
 		return err
 	}
 	if lockedCount != 2 {
-		return fmt.Errorf("accounts not found for transfer: from=%s to=%s", event.From, event.To)
+		return fmt.Errorf("active accounts not found for transfer: from=%s to=%s", event.From, event.To)
+	}
+
+	fromAcc, ok := accounts[event.From]
+	if !ok {
+		return fmt.Errorf("source account not found: from=%s", event.From)
+	}
+
+	toAcc, ok := accounts[event.To]
+	if !ok {
+		return fmt.Errorf("destination account not found: to=%s", event.To)
+	}
+
+	if fromAcc.Balance < amount {
+		return fmt.Errorf("insufficient funds: from=%s", event.From)
 	}
 
 	debitResult, err := tx.ExecContext(ctx, `
 		UPDATE accounts
 		SET balance = balance - $1, version = version + 1
-		WHERE account_number = $2
+		WHERE id = $2
 		  AND balance >= $1
-	`, event.Amount, event.From)
+	`, amount, fromAcc.ID)
 	if err != nil {
 		return err
 	}
@@ -233,8 +267,8 @@ func (w *Worker) applyTransferBalanceUpdates(ctx context.Context, tx *sql.Tx, ev
 	creditResult, err := tx.ExecContext(ctx, `
 		UPDATE accounts
 		SET balance = balance + $1, version = version + 1
-		WHERE account_number = $2
-	`, event.Amount, event.To)
+		WHERE id = $2
+	`, amount, toAcc.ID)
 	if err != nil {
 		return err
 	}
@@ -245,6 +279,35 @@ func (w *Worker) applyTransferBalanceUpdates(ctx context.Context, tx *sql.Tx, ev
 	}
 	if creditRows == 0 {
 		return fmt.Errorf("destination account not found: to=%s", event.To)
+	}
+
+	var transactionID string
+	err = tx.QueryRowContext(ctx, `
+		INSERT INTO transactions (from_account_id, to_account_id, amount, status, reference_code, completed_at)
+		VALUES ($1, $2, $3, 'completed', $4, CURRENT_TIMESTAMP)
+		RETURNING id
+	`, fromAcc.ID, toAcc.ID, amount, event.EventID).Scan(&transactionID)
+	if err != nil {
+		return err
+	}
+
+	fromBalanceAfter := math.Round((fromAcc.Balance-amount)*100) / 100
+	toBalanceAfter := math.Round((toAcc.Balance+amount)*100) / 100
+
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO ledger_entries (
+			transaction_id,
+			account_id,
+			entry_type,
+			amount,
+			balance_before,
+			balance_after
+		)
+		VALUES
+			($1, $2, 'debit', $3, $4, $5),
+			($1, $6, 'credit', $3, $7, $8)
+	`, transactionID, fromAcc.ID, amount, fromAcc.Balance, fromBalanceAfter, toAcc.ID, toAcc.Balance, toBalanceAfter); err != nil {
+		return err
 	}
 
 	return nil
