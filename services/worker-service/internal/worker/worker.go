@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/chaosbank/chaosbank/pkg/chaos"
 	"github.com/chaosbank/chaosbank/pkg/service"
 	"github.com/chaosbank/chaosbank/pkg/util"
 	"github.com/chaosbank/chaosbank/services/worker-service/config"
@@ -20,6 +21,7 @@ type Worker struct {
 	consumer *ckafka.Consumer
 	db       *sql.DB
 	logger   *service.Logger
+	chaos    *chaos.Injector
 }
 
 type TransferEvent struct {
@@ -31,13 +33,14 @@ type TransferEvent struct {
 }
 
 func NewWorker(cfg *config.Config, logger *service.Logger, db *sql.DB) *Worker {
-	consumer := ckafka.NewConsumer(cfg.KafkaBrokers, "transactions", "worker-group", logger)
+	consumer := ckafka.NewConsumer(cfg.KafkaBrokers, "transactions", cfg.KafkaGroupID, cfg.ReplayFromBeginning, logger)
 
 	return &Worker{
 		cfg:      cfg,
 		consumer: consumer,
 		db:       db,
 		logger:   logger,
+		chaos:    chaos.NewInjector(logger),
 	}
 }
 
@@ -120,6 +123,10 @@ func (w *Worker) processTransaction(ctx context.Context, msg skafka.Message) err
 }
 
 func (w *Worker) ensureProcessedEventsTable(ctx context.Context) error {
+	if err := w.chaos.InjectDBFailure("worker.ensure_processed_events_table"); err != nil {
+		return err
+	}
+
 	_, err := w.db.ExecContext(ctx, `
 		CREATE TABLE IF NOT EXISTS processed_events (
 			event_id UUID PRIMARY KEY,
@@ -133,6 +140,10 @@ func (w *Worker) ensureProcessedEventsTable(ctx context.Context) error {
 }
 
 func (w *Worker) applyTransferWithDedup(ctx context.Context, event TransferEvent, msg skafka.Message) (bool, error) {
+	if err := w.chaos.InjectDBFailure("worker.begin_transaction"); err != nil {
+		return false, err
+	}
+
 	tx, err := w.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
 		return false, err
@@ -182,10 +193,18 @@ func (w *Worker) applyTransferWithDedup(ctx context.Context, event TransferEvent
 		return false, err
 	}
 
+	if err := w.chaos.InjectPartialFailure("worker.after_commit"); err != nil {
+		return false, err
+	}
+
 	return false, nil
 }
 
 func (w *Worker) applyTransferBalanceUpdates(ctx context.Context, tx *sql.Tx, event TransferEvent) error {
+	if err := w.chaos.InjectDBFailure("worker.apply_transfer_balance_updates"); err != nil {
+		return err
+	}
+
 	if event.From == event.To {
 		return errors.New("from and to accounts must be different")
 	}

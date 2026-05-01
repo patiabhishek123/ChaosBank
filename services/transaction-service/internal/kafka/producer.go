@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chaosbank/chaosbank/pkg/chaos"
 	"github.com/chaosbank/chaosbank/pkg/service"
 	"github.com/google/uuid"
 	"github.com/segmentio/kafka-go"
@@ -25,6 +26,7 @@ type Producer struct {
 	writer *kafka.Writer
 	logger *service.Logger
 	topic  string
+	chaos  *chaos.Injector
 }
 
 type TransferEvent struct {
@@ -48,6 +50,7 @@ func NewProducer(brokers, topic string, logger *service.Logger) EventProducer {
 		}),
 		logger: logger,
 		topic:  topic,
+		chaos:  chaos.NewInjector(logger),
 	}
 }
 
@@ -91,8 +94,28 @@ func (p *Producer) ProduceTransferEvent(ctx context.Context, event TransferEvent
 
 	var lastErr error
 	for attempt := 1; attempt <= maxProducerRetries; attempt++ {
+		if err := p.chaos.InjectNetworkTimeout("kafka.producer.write_message"); err != nil {
+			lastErr = err
+			p.logger.Warn("kafka.producer.chaos_network_timeout", map[string]interface{}{
+				"event_id": event.EventID,
+				"topic":    p.topic,
+				"attempt":  attempt,
+				"error":    err.Error(),
+			})
+		} else {
 		lastErr = p.writer.WriteMessages(ctx, message)
+		}
 		if lastErr == nil {
+			if err := p.chaos.InjectPartialFailure("kafka.producer.after_send"); err != nil {
+				p.logger.Warn("kafka.producer.chaos_partial_failure", map[string]interface{}{
+					"event_id": event.EventID,
+					"topic":    p.topic,
+					"attempt":  attempt,
+					"error":    err.Error(),
+				})
+				return err
+			}
+
 			p.logger.Info("kafka.producer.sent", map[string]interface{}{
 				"event_id": event.EventID,
 				"topic":    p.topic,

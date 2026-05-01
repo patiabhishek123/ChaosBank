@@ -2,17 +2,22 @@ package config
 
 import (
 	"os"
+	"strings"
 )
 
 type Config struct {
 	KafkaBrokers string
+	KafkaGroupID string
+	ReplayFromBeginning bool
 	DatabaseURL  string
 }
 
 func Load() *Config {
 	return &Config{
-		KafkaBrokers: getEnv("KAFKA_BROKERS", "kafka:29092"),
-		DatabaseURL:  getEnv("DATABASE_URL", "postgres://chaosbank:chaosbank123@postgres:5432/chaosbank?sslmode=disable"),
+		KafkaBrokers:        getEnv("KAFKA_BROKERS", "kafka:29092"),
+		KafkaGroupID:        getEnv("KAFKA_GROUP_ID", "worker-group"),
+		ReplayFromBeginning: isTrue(getEnv("KAFKA_REPLAY_FROM_BEGINNING", "false")),
+		DatabaseURL:         getEnv("DATABASE_URL", "postgres://chaosbank:chaosbank123@postgres:5432/chaosbank?sslmode=disable"),
 	}
 }
 
@@ -21,4 +26,8 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+func isTrue(value string) bool {
+	return strings.EqualFold(strings.TrimSpace(value), "true")
 }

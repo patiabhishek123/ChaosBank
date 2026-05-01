@@ -6,6 +6,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/chaosbank/chaosbank/pkg/chaos"
 	"github.com/chaosbank/chaosbank/pkg/service"
 	"github.com/chaosbank/chaosbank/services/api-gateway/internal/handler"
 )
@@ -15,6 +16,7 @@ func main() {
 	logger := service.NewLogger(baseCfg.LogLevel, os.Stdout)
 
 	router := service.NewRouter()
+	router.Use(chaos.NewInjector(logger).HTTPMiddleware)
 	h := handler.NewHandler()
 	router.Mount("/", h.Router())
 

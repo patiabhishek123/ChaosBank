@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/chaosbank/chaosbank/pkg/chaos"
 	"github.com/chaosbank/chaosbank/pkg/service"
 	"github.com/chaosbank/chaosbank/services/transaction-service/config"
 	"github.com/chaosbank/chaosbank/services/transaction-service/internal/handler"
@@ -38,6 +39,7 @@ func main() {
 	logger.Info("db.connected", nil)
 
 	router := service.NewRouter()
+	router.Use(chaos.NewInjector(logger).HTTPMiddleware)
 	h := handler.NewHandler(logger, db, producer)
 	router.Mount("/", h.Router())
 

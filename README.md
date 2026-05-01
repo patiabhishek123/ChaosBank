@@ -47,3 +47,19 @@ This monorepo contains:
 ## Environment Variables
 
 Each service uses environment variables for configuration. See config/ directories for details.
+
+### Kafka replay controls (worker-service)
+
+- `KAFKA_GROUP_ID` (default: `worker-group`)
+- `KAFKA_REPLAY_FROM_BEGINNING` (default: `false`)
+
+When `KAFKA_REPLAY_FROM_BEGINNING=true`, the worker starts with a fresh replay group and consumes from offset `0` for topic `transactions`.
+
+### Event retention
+
+Kafka broker is configured with:
+
+- `KAFKA_LOG_RETENTION_MS=-1`
+- `KAFKA_LOG_RETENTION_BYTES=-1`
+
+This keeps events from being deleted, enabling replay.
