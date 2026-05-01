@@ -9,14 +9,15 @@ import (
 	"math"
 	"net"
 	"net/http"
-	"strconv"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/chaosbank/chaosbank/pkg/chaos"
+	"github.com/chaosbank/chaosbank/pkg/metrics"
 	"github.com/chaosbank/chaosbank/pkg/service"
 	"github.com/chaosbank/chaosbank/pkg/util"
 	"github.com/chaosbank/chaosbank/services/worker-service/config"
@@ -102,8 +103,14 @@ func (w *Worker) Start(ctx context.Context) {
 }
 
 func (w *Worker) processTransaction(ctx context.Context, msg skafka.Message) error {
+	start := time.Now()
+	defer func() {
+		metrics.Default().ObserveLatency(time.Since(start))
+	}()
+
 	if w.replaying.Load() {
 		if bypass, ok := ctx.Value(replayBypassKey{}).(bool); !ok || !bypass {
+			metrics.Default().IncFailedTransactions()
 			return errors.New("replay in progress")
 		}
 	}
@@ -116,6 +123,7 @@ func (w *Worker) processTransaction(ctx context.Context, msg skafka.Message) err
 
 	var event TransferEvent
 	if err := json.Unmarshal(msg.Value, &event); err != nil {
+		metrics.Default().IncFailedTransactions()
 		w.logger.Error("worker.invalid_event", map[string]interface{}{
 			"error":   err.Error(),
 			"payload": string(msg.Value),
@@ -125,6 +133,7 @@ func (w *Worker) processTransaction(ctx context.Context, msg skafka.Message) err
 	}
 
 	if event.EventID == "" {
+		metrics.Default().IncFailedTransactions()
 		w.logger.Error("worker.missing_event_id", map[string]interface{}{
 			"payload": string(msg.Value),
 		})
@@ -133,6 +142,7 @@ func (w *Worker) processTransaction(ctx context.Context, msg skafka.Message) err
 	}
 
 	if !util.ValidateRequestID(event.EventID) {
+		metrics.Default().IncFailedTransactions()
 		w.logger.Error("worker.invalid_event_id", map[string]interface{}{
 			"event_id": event.EventID,
 		})
@@ -141,6 +151,7 @@ func (w *Worker) processTransaction(ctx context.Context, msg skafka.Message) err
 	}
 
 	if event.From == "" || event.To == "" || event.Amount <= 0 {
+		metrics.Default().IncFailedTransactions()
 		w.logger.Error("worker.invalid_transfer_event", map[string]interface{}{
 			"event_id": event.EventID,
 			"from":     event.From,
@@ -152,6 +163,7 @@ func (w *Worker) processTransaction(ctx context.Context, msg skafka.Message) err
 
 	duplicate, err := w.applyTransferWithDedup(ctx, event, msg)
 	if err != nil {
+		metrics.Default().IncFailedTransactions()
 		return err
 	}
 
@@ -172,6 +184,7 @@ func (w *Worker) processTransaction(ctx context.Context, msg skafka.Message) err
 		"partition": msg.Partition,
 		"offset":    msg.Offset,
 	})
+	metrics.Default().IncTotalTransactions()
 
 	return nil
 }

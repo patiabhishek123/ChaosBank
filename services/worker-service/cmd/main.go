@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/chaosbank/chaosbank/pkg/metrics"
 	"github.com/chaosbank/chaosbank/pkg/service"
 	"github.com/chaosbank/chaosbank/services/worker-service/config"
 	"github.com/chaosbank/chaosbank/services/worker-service/internal/worker"
@@ -39,6 +40,7 @@ func main() {
 	router.Post("/chaos", workerSvc.ChaosHTTPHandler())
 	router.Get("/transactions/log", workerSvc.TransactionLogHTTPHandler())
 	router.Get("/stats", workerSvc.StatsHTTPHandler())
+	router.Handle("/metrics", metrics.Handler())
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

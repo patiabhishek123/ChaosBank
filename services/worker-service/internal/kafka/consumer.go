@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/chaosbank/chaosbank/pkg/chaos"
+	"github.com/chaosbank/chaosbank/pkg/metrics"
 	"github.com/chaosbank/chaosbank/pkg/service"
 	"github.com/segmentio/kafka-go"
 )
@@ -160,6 +161,7 @@ func (c *Consumer) processWithRetry(ctx context.Context, msg kafka.Message, hand
 			return nil
 		} else {
 			lastErr = err
+			metrics.Default().IncRetries()
 			c.logger.Warn("kafka.consumer.retry", map[string]interface{}{
 				"topic":     msg.Topic,
 				"partition": msg.Partition,
