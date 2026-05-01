@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/chaosbank/chaosbank/pkg/service"
@@ -25,17 +26,46 @@ const (
 )
 
 type Injector struct {
-	logger  *service.Logger
-	enabled bool
+	logger *service.Logger
+}
+
+var chaosModeOverride atomic.Int32
+
+func init() {
+	chaosModeOverride.Store(-1)
 }
 
 func NewInjector(logger *service.Logger) *Injector {
-	chaosMode := strings.EqualFold(strings.TrimSpace(os.Getenv("CHAOS_MODE")), "true")
-	return &Injector{logger: logger, enabled: chaosMode}
+	return &Injector{logger: logger}
 }
 
 func (i *Injector) Enabled() bool {
-	return i != nil && i.enabled
+	if i == nil {
+		return false
+	}
+	return CurrentMode()
+}
+
+func CurrentMode() bool {
+	override := chaosModeOverride.Load()
+	if override == 0 {
+		return false
+	}
+	if override == 1 {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("CHAOS_MODE")), "true")
+}
+
+func SetMode(enabled bool) {
+	if enabled {
+		chaosModeOverride.Store(1)
+		os.Setenv("CHAOS_MODE", "true")
+		return
+	}
+
+	chaosModeOverride.Store(0)
+	os.Setenv("CHAOS_MODE", "false")
 }
 
 func (i *Injector) InjectDBFailure(operation string) error {

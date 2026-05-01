@@ -35,6 +35,10 @@ func main() {
 	router := service.NewRouter()
 	workerSvc := worker.NewWorker(appCfg, logger, db)
 	router.Post("/replay", workerSvc.ReplayHTTPHandler())
+	router.Get("/chaos", workerSvc.ChaosHTTPHandler())
+	router.Post("/chaos", workerSvc.ChaosHTTPHandler())
+	router.Get("/transactions/log", workerSvc.TransactionLogHTTPHandler())
+	router.Get("/stats", workerSvc.StatsHTTPHandler())
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

@@ -24,6 +24,11 @@ This monorepo contains:
 ### Worker Service
 - Consumes Kafka messages for background processing
 
+### Frontend (React)
+- Port: 5173 (dev)
+- Minimal black/white terminal-themed control UI
+- Pages: transaction log (live), chaos toggle, replay, system stats
+
 ## Infrastructure
 
 - **Kafka**: Message broker
@@ -42,6 +47,13 @@ This monorepo contains:
    # For each service
    cd services/api-gateway
    go run cmd/main.go
+   ```
+
+3. Run frontend:
+   ```bash
+   cd services/frontend
+   npm install
+   npm run dev
    ```
 
 ## Environment Variables

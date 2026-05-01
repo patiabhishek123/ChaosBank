@@ -9,6 +9,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"strconv"
 	"sort"
 	"strings"
 	"sync"
@@ -43,6 +44,32 @@ type ReplayResult struct {
 	Partitions      int       `json:"partitions"`
 	EventsProcessed int64     `json:"events_processed"`
 	Status          string    `json:"status"`
+}
+
+type TransactionLogItem struct {
+	ID          string     `json:"id"`
+	From        string     `json:"from"`
+	To          string     `json:"to"`
+	Amount      float64    `json:"amount"`
+	Status      string     `json:"status"`
+	CreatedAt   time.Time  `json:"created_at"`
+	CompletedAt *time.Time `json:"completed_at,omitempty"`
+}
+
+type SystemStats struct {
+	AccountsCount        int64 `json:"accounts_count"`
+	TransactionsCount    int64 `json:"transactions_count"`
+	ProcessedEventsCount int64 `json:"processed_events_count"`
+	ReplayInProgress     bool  `json:"replay_in_progress"`
+	ChaosEnabled         bool  `json:"chaos_enabled"`
+}
+
+type ChaosToggleRequest struct {
+	Enabled *bool `json:"enabled"`
+}
+
+type ChaosToggleResponse struct {
+	Enabled bool `json:"enabled"`
 }
 
 type TransferEvent struct {
@@ -192,6 +219,130 @@ func (w *Worker) ReplayHTTPHandler() http.HandlerFunc {
 		if err := json.NewEncoder(rw).Encode(result); err != nil {
 			w.logger.Error("worker.replay.encode_response_failed", map[string]interface{}{"error": err.Error()})
 		}
+	}
+}
+
+func (w *Worker) ChaosHTTPHandler() http.HandlerFunc {
+	return func(rw http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			respondJSON(rw, http.StatusOK, ChaosToggleResponse{Enabled: chaos.CurrentMode()})
+			return
+		case http.MethodPost:
+			var req ChaosToggleRequest
+			if r.Body != nil {
+				_ = json.NewDecoder(r.Body).Decode(&req)
+			}
+
+			next := !chaos.CurrentMode()
+			if req.Enabled != nil {
+				next = *req.Enabled
+			}
+
+			chaos.SetMode(next)
+			w.logger.Warn("worker.chaos.mode_changed", map[string]interface{}{"enabled": next})
+			respondJSON(rw, http.StatusOK, ChaosToggleResponse{Enabled: next})
+			return
+		default:
+			rw.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}
+}
+
+func (w *Worker) TransactionLogHTTPHandler() http.HandlerFunc {
+	return func(rw http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			rw.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+
+		limit := int64(50)
+		if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+			if v, err := strconv.ParseInt(raw, 10, 64); err == nil && v > 0 {
+				if v > 500 {
+					v = 500
+				}
+				limit = v
+			}
+		}
+
+		rows, err := w.db.QueryContext(r.Context(), `
+			SELECT
+				t.id,
+				fa.account_number,
+				ta.account_number,
+				t.amount,
+				t.status,
+				t.created_at,
+				t.completed_at
+			FROM transactions t
+			JOIN accounts fa ON fa.id = t.from_account_id
+			JOIN accounts ta ON ta.id = t.to_account_id
+			ORDER BY t.created_at DESC
+			LIMIT $1
+		`, limit)
+		if err != nil {
+			w.logger.Error("worker.transactions_log.query_error", map[string]interface{}{"error": err.Error()})
+			http.Error(rw, "failed to query transaction log", http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+
+		items := make([]TransactionLogItem, 0)
+		for rows.Next() {
+			var item TransactionLogItem
+			var completedAt sql.NullTime
+			if err := rows.Scan(&item.ID, &item.From, &item.To, &item.Amount, &item.Status, &item.CreatedAt, &completedAt); err != nil {
+				w.logger.Error("worker.transactions_log.scan_error", map[string]interface{}{"error": err.Error()})
+				http.Error(rw, "failed to read transaction log", http.StatusInternalServerError)
+				return
+			}
+			if completedAt.Valid {
+				ts := completedAt.Time
+				item.CompletedAt = &ts
+			}
+			items = append(items, item)
+		}
+
+		if err := rows.Err(); err != nil {
+			w.logger.Error("worker.transactions_log.rows_error", map[string]interface{}{"error": err.Error()})
+			http.Error(rw, "failed to read transaction log", http.StatusInternalServerError)
+			return
+		}
+
+		respondJSON(rw, http.StatusOK, items)
+	}
+}
+
+func (w *Worker) StatsHTTPHandler() http.HandlerFunc {
+	return func(rw http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			rw.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+
+		stats := SystemStats{
+			ReplayInProgress: w.replaying.Load(),
+			ChaosEnabled:     chaos.CurrentMode(),
+		}
+
+		if err := w.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM accounts`).Scan(&stats.AccountsCount); err != nil {
+			w.logger.Error("worker.stats.accounts_error", map[string]interface{}{"error": err.Error()})
+			http.Error(rw, "failed to query stats", http.StatusInternalServerError)
+			return
+		}
+		if err := w.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM transactions`).Scan(&stats.TransactionsCount); err != nil {
+			w.logger.Error("worker.stats.transactions_error", map[string]interface{}{"error": err.Error()})
+			http.Error(rw, "failed to query stats", http.StatusInternalServerError)
+			return
+		}
+		if err := w.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM processed_events`).Scan(&stats.ProcessedEventsCount); err != nil {
+			w.logger.Error("worker.stats.processed_events_error", map[string]interface{}{"error": err.Error()})
+			http.Error(rw, "failed to query stats", http.StatusInternalServerError)
+			return
+		}
+
+		respondJSON(rw, http.StatusOK, stats)
 	}
 }
 
@@ -654,4 +805,10 @@ func ensureReplayAccounts(ctx context.Context, tx *sql.Tx, event TransferEvent) 
 	}
 
 	return nil
+}
+
+func respondJSON(w http.ResponseWriter, status int, body interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(body)
 }
