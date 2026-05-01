@@ -24,12 +24,12 @@ import (
 )
 
 type Worker struct {
-	cfg      *config.Config
-	consumer *ckafka.Consumer
-	db       *sql.DB
-	logger   *service.Logger
-	chaos    *chaos.Injector
-	replayMu sync.Mutex
+	cfg       *config.Config
+	consumer  *ckafka.Consumer
+	db        *sql.DB
+	logger    *service.Logger
+	chaos     *chaos.Injector
+	replayMu  sync.Mutex
 	replaying atomic.Bool
 }
 
@@ -252,9 +252,9 @@ func (w *Worker) replayAllEvents(ctx context.Context) (*ReplayResult, error) {
 
 		total := lastOffset - firstOffset
 		w.logger.Info("worker.replay.partition_start", map[string]interface{}{
-			"partition":    partition,
-			"first_offset": firstOffset,
-			"last_offset":  lastOffset,
+			"partition":     partition,
+			"first_offset":  firstOffset,
+			"last_offset":   lastOffset,
 			"message_count": total,
 		})
 
