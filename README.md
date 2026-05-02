@@ -33,25 +33,9 @@ This repository answers those questions with concrete code.
 
 ### High-level flow
 
-```mermaid
-flowchart LR
-      U[Client / Frontend] --> AG[API Gateway :8080]
-      AG --> TS[Transaction Service :8081]
-      TS --> IDEMP[(Idempotency Records)]
-      TS --> K[(Kafka Topic: transactions)]
-      WS[Worker Service :8082] --> K
-      WS --> PG[(PostgreSQL)]
-      WS --> METRICS[/metrics]
-      WS --> ADMIN[/chaos /replay /stats /transactions/log]
-      FE[React Frontend :5173] --> WS
-
-      subgraph State in PostgreSQL
-         PG --> A[accounts]
-         PG --> T[transactions]
-         PG --> L[ledger_entries]
-         PG --> P[processed_events]
-      end
-```
+<p align="center">
+  <img src="public/Design.png" alt="ChaosBank System Design" width="1000">
+</p>
 
 ### Request lifecycle
 
