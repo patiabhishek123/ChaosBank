@@ -12,6 +12,11 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, ''),
       },
+      '/txapi': {
+        target: process.env.VITE_TRANSACTION_BASE_URL || 'http://localhost:8081',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/txapi/, ''),
+      },
     },
   },
 })

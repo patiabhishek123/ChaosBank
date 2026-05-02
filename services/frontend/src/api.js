@@ -1,4 +1,5 @@
 const base = import.meta.env.VITE_API_BASE_URL || '/api'
+const txBase = import.meta.env.VITE_TRANSACTION_BASE_URL || '/txapi'
 
 export async function getTransactionLog(limit = 50) {
   const res = await fetch(`${base}/transactions/log?limit=${limit}`)
@@ -48,4 +49,23 @@ export async function getStats() {
 export async function getHealth() {
   const res = await fetch(`${base}/health`)
   return { ok: res.ok, status: res.status }
+}
+
+export async function listAccounts(limit = 100) {
+  const res = await fetch(`${txBase}/accounts?limit=${limit}`)
+  if (!res.ok) throw new Error(`accounts list failed: ${res.status}`)
+  return res.json()
+}
+
+export async function createAccount(payload) {
+  const res = await fetch(`${txBase}/accounts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(text || `create account failed: ${res.status}`)
+  }
+  return res.json()
 }

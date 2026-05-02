@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/chaosbank/chaosbank/pkg/service"
@@ -17,6 +19,7 @@ import (
 type Handler struct {
 	router                chi.Router
 	logger                *service.Logger
+	db                    *sql.DB
 	idempotencyRepository domain.IdempotencyRepository
 	producer              kafka.EventProducer
 }
@@ -25,6 +28,7 @@ func NewHandler(logger *service.Logger, db *sql.DB, producer kafka.EventProducer
 	h := &Handler{
 		router:                chi.NewRouter(),
 		logger:                logger,
+		db:                    db,
 		idempotencyRepository: repository.NewPostgresIdempotencyRepository(db),
 		producer:              producer,
 	}
@@ -37,7 +41,98 @@ func (h *Handler) Router() chi.Router {
 }
 
 func (h *Handler) setupRoutes() {
+	h.router.Get("/accounts", h.listAccounts)
+	h.router.Post("/accounts", h.createAccount)
 	h.router.Post("/transfer", h.transfer)
+}
+
+func (h *Handler) createAccount(w http.ResponseWriter, r *http.Request) {
+	var req domain.CreateAccountRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.writeError(w, http.StatusBadRequest, "accounts", "invalid JSON body")
+		return
+	}
+
+	if err := req.Validate(); err != nil {
+		h.writeError(w, http.StatusBadRequest, "accounts", err.Error())
+		return
+	}
+
+	currency := strings.ToUpper(strings.TrimSpace(req.Currency))
+	if currency == "" {
+		currency = "USD"
+	}
+
+	var account domain.AccountSummary
+	err := h.db.QueryRow(`
+		INSERT INTO accounts (account_number, owner_name, balance, currency, status)
+		VALUES ($1, $2, $3, $4, 'active')
+		RETURNING id, account_number, owner_name, balance, currency, status, created_at
+	`, strings.TrimSpace(req.AccountNumber), strings.TrimSpace(req.OwnerName), req.InitialBalance, currency).Scan(
+		&account.ID,
+		&account.AccountNumber,
+		&account.OwnerName,
+		&account.Balance,
+		&account.Currency,
+		&account.Status,
+		&account.CreatedAt,
+	)
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "accounts_account_number_key") {
+			h.writeError(w, http.StatusConflict, "accounts", "account number already exists")
+			return
+		}
+		h.logger.Error("handler.accounts.create_error", map[string]interface{}{"error": err.Error()})
+		h.writeError(w, http.StatusInternalServerError, "accounts", "failed to create account")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(account)
+}
+
+func (h *Handler) listAccounts(w http.ResponseWriter, r *http.Request) {
+	limit := 100
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v > 0 && v <= 500 {
+			limit = v
+		}
+	}
+
+	rows, err := h.db.Query(`
+		SELECT id, account_number, owner_name, balance, currency, status, created_at
+		FROM accounts
+		ORDER BY created_at DESC
+		LIMIT $1
+	`, limit)
+	if err != nil {
+		h.logger.Error("handler.accounts.list_error", map[string]interface{}{"error": err.Error()})
+		h.writeError(w, http.StatusInternalServerError, "accounts", "failed to list accounts")
+		return
+	}
+	defer rows.Close()
+
+	accounts := make([]domain.AccountSummary, 0)
+	for rows.Next() {
+		var a domain.AccountSummary
+		if err := rows.Scan(&a.ID, &a.AccountNumber, &a.OwnerName, &a.Balance, &a.Currency, &a.Status, &a.CreatedAt); err != nil {
+			h.logger.Error("handler.accounts.scan_error", map[string]interface{}{"error": err.Error()})
+			h.writeError(w, http.StatusInternalServerError, "accounts", "failed to read account rows")
+			return
+		}
+		accounts = append(accounts, a)
+	}
+
+	if err := rows.Err(); err != nil {
+		h.logger.Error("handler.accounts.rows_error", map[string]interface{}{"error": err.Error()})
+		h.writeError(w, http.StatusInternalServerError, "accounts", "failed to list accounts")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(accounts)
 }
 
 func (h *Handler) transfer(w http.ResponseWriter, r *http.Request) {

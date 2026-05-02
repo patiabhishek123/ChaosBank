@@ -3,8 +3,10 @@ import TransactionLogPage from './pages/TransactionLogPage'
 import ChaosPage from './pages/ChaosPage'
 import ReplayPage from './pages/ReplayPage'
 import StatsPage from './pages/StatsPage'
+import AccountsPage from './pages/AccountsPage'
 
 const tabs = [
+  { id: 'accounts', label: 'ACCOUNTS' },
   { id: 'log', label: 'TRANSACTION LOG' },
   { id: 'chaos', label: 'CHAOS TOGGLE' },
   { id: 'replay', label: 'REPLAY' },
@@ -12,7 +14,7 @@ const tabs = [
 ]
 
 export default function App() {
-  const [active, setActive] = useState('log')
+  const [active, setActive] = useState('accounts')
 
   return (
     <main className="app">
@@ -33,6 +35,7 @@ export default function App() {
         ))}
       </nav>
 
+      {active === 'accounts' && <AccountsPage />}
       {active === 'log' && <TransactionLogPage />}
       {active === 'chaos' && <ChaosPage />}
       {active === 'replay' && <ReplayPage />}
