@@ -23,6 +23,23 @@ echo "→ Waiting for Kafka..."
 until docker exec chaosbank_kafka_1 kafka-broker-api-versions --bootstrap-server localhost:9092 &>/dev/null; do sleep 2; done
 echo "   Kafka ready."
 
+# ── Run migrations (Up section only) ─────────────────────────────────────────
+echo "→ Running database migrations..."
+for f in "$ROOT/services/transaction-service/migrations/"*.sql; do
+  sed '/^-- +migrate Down/,$d' "$f" | docker exec -i chaosbank_postgres_1 psql -U chaosbank -d chaosbank -q 2>&1 | grep -v "^$" | grep -v "^CREATE\|^INSERT\|^DROP\|^NOTICE" || true
+done
+echo "   Migrations done."
+
+# ── Seed demo accounts (idempotent) ───────────────────────────────────────────
+echo "→ Seeding demo accounts (Alice & Bob)..."
+docker exec chaosbank_postgres_1 psql -U chaosbank -d chaosbank -q -c "
+  INSERT INTO accounts (account_number, owner_name, balance, currency, status) VALUES
+    ('acc-alice', 'Alice', 10000.00, 'USD', 'active'),
+    ('acc-bob',   'Bob',   10000.00, 'USD', 'active')
+  ON CONFLICT (account_number) DO NOTHING;
+" 2>&1 || true
+echo "   Accounts ready."
+
 # ── Services ──────────────────────────────────────────────────────────────────
 echo "→ Starting transaction-service :8081..."
 cd "$ROOT/services/transaction-service"
