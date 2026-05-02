@@ -1,5 +1,9 @@
 # ChaosBank
 
+<p align="center">
+  <img src="public/Logo.png" alt="ChaosBank logo" width="1000">
+</p>
+
 ChaosBank is a distributed banking simulation built to demonstrate production-minded backend design under failure, retries, replay, and concurrency pressure.
 
 It is intentionally designed like a system design interview project:
