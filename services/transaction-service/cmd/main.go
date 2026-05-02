@@ -39,11 +39,13 @@ func main() {
 	logger.Info("db.connected", nil)
 
 	router := service.NewRouter()
-	router.Use(chaos.NewInjector(logger).HTTPMiddleware)
 	h := handler.NewHandler(logger, db, producer)
 	router.Mount("/", h.Router())
 
-	server := service.NewServer(baseCfg, router)
+	chaosMiddleware := chaos.NewInjector(logger).HTTPMiddleware
+	handlerWithChaos := chaosMiddleware(router)
+
+	server := service.NewServer(baseCfg, handlerWithChaos)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
