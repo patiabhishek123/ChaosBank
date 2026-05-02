@@ -47,7 +47,7 @@ PORT=8081 DATABASE_URL="$DB_URL" KAFKA_BROKERS="$KAFKA" go run cmd/main.go >/tmp
 
 echo "→ Starting worker-service :8082..."
 cd "$ROOT/services/worker-service"
-PORT=8082 DATABASE_URL="$DB_URL" KAFKA_BROKERS="$KAFKA" go run cmd/main.go >/tmp/worker-svc.log 2>&1 &
+PORT=8082 DATABASE_URL="$DB_URL" KAFKA_BROKERS="$KAFKA" REPLAY_ENABLED=true REPLAY_CONFIRM_TOKEN="REPLAY_ALL_EVENTS" go run cmd/main.go >/tmp/worker-svc.log 2>&1 &
 
 echo "→ Starting api-gateway :8080..."
 cd "$ROOT/services/api-gateway"

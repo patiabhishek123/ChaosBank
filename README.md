@@ -343,13 +343,45 @@ This turns ChaosBank into a usable demo instead of just a code sample.
 
 ## Running the system
 
-### 1. Start infrastructure
+### 1. One-command startup (recommended)
+
+Use the root launcher script to:
+
+- clear stale ports/processes
+- start Docker dependencies
+- run DB migrations
+- seed demo accounts (`acc-alice`, `acc-bob`)
+- start all Go services
+
+```bash
+bash start.sh
+```
+
+### 2. Run frontend
+
+```bash
+npm --prefix services/frontend install
+npm --prefix services/frontend run dev -- --port 5174
+```
+
+Open:
+
+- frontend: `http://localhost:5174`
+- api-gateway: `http://localhost:8080`
+- transaction-service: `http://localhost:8081`
+- worker-service: `http://localhost:8082`
+
+### 3. Manual startup (optional)
+
+If you prefer separate terminals instead of `start.sh`:
+
+### 3.1 Start infrastructure
 
 ```bash
 docker-compose up -d
 ```
 
-### 2. Run services
+### 3.2 Run services
 
 Terminal 1:
 
@@ -372,7 +404,7 @@ cd services/worker-service
 go run cmd/main.go
 ```
 
-### 3. Run frontend
+### 3.3 Run frontend
 
 ```bash
 cd services/frontend
@@ -397,7 +429,7 @@ This sequence works well in interviews or demos.
 curl -X POST http://localhost:8081/transfer \
    -H 'Content-Type: application/json' \
    -H 'Idempotency-Key: 11111111-1111-1111-1111-111111111111' \
-   -d '{"from":"alice","to":"bob","amount":50.00}'
+   -d '{"from":"acc-alice","to":"acc-bob","amount":50.00}'
 ```
 
 What to explain:
@@ -446,6 +478,8 @@ curl -X POST http://localhost:8082/replay \
    -H 'X-Replay-Confirm: REPLAY_ALL_EVENTS'
 ```
 
+> Note: replay is disabled by default unless `REPLAY_ENABLED=true` is set for worker-service.
+
 What to explain:
 
 - DB state is cleared
@@ -465,6 +499,49 @@ What to explain:
 - failures
 - retries
 - latency
+
+## Frontend walkthrough script (ready to speak)
+
+### 60-second version
+
+1. "This UI has four operational pages: live transaction log, chaos toggle, replay, and system stats."
+2. "Transaction Log auto-refreshes every 2 seconds and shows completed processing, not just request acceptance."
+3. "Chaos Toggle enables runtime fault injection to test retries and resilience without restart."
+4. "Replay rebuilds state from Kafka history with safety guards and confirmation token."
+5. "System Stats gives live health and counts for accounts, transactions, and processed events."
+
+### 2–3 minute version
+
+- **Transaction Log**
+   - shows near-real-time worker outcomes
+   - confirms async pipeline completion
+   - useful for observing lag/failures quickly
+
+- **Chaos Toggle**
+   - switches failure injection ON/OFF live
+   - demonstrates robustness of idempotency + dedupe + transactional updates
+
+- **Replay**
+   - clears mutable state and reprocesses topic history
+   - demonstrates recoverability and deterministic rebuild
+   - protected by `REPLAY_ENABLED` and `X-Replay-Confirm`
+
+- **System Stats**
+   - summarizes system state in one view
+   - correlates user actions with backend effects
+
+### Optional live traffic generator for frontend demo
+
+```bash
+for i in 1 2 3; do
+   KEY=$(cat /proc/sys/kernel/random/uuid)
+   curl -s -X POST http://localhost:8081/transfer \
+      -H "Content-Type: application/json" \
+      -H "Idempotency-Key: $KEY" \
+      -d "{\"from\":\"acc-alice\",\"to\":\"acc-bob\",\"amount\":$((i*50))}"
+   echo
+done
+```
 
 ## What interviewers usually ask about this design
 

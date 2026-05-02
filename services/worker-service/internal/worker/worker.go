@@ -505,8 +505,7 @@ func (w *Worker) resetReplayTables(ctx context.Context) error {
 			ledger_entries,
 			transactions,
 			processed_events,
-			account_locks,
-			accounts
+			account_locks
 		RESTART IDENTITY CASCADE
 	`); err != nil {
 		return fmt.Errorf("failed to clear replay tables: %w", err)
